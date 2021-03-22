@@ -7,8 +7,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <unistd.h>
-#include "configreader.h"
-#include "process.h"
+#include "../include/configreader.h"
+#include "../include/process.h"
 
 // TODO times and cores and state. Table is done. 
 // May change any code as much as we like to get things done, 
@@ -16,11 +16,12 @@
 // TODO implement custom comparators in process.cpp
 // Note, the scheduling algorithms are extremely similar, don't waste time duplicating
 //		- Round-robin, 1st come 1st serve, shortest job first, preemptive priority
-//		- Just change the queue ordering
+//		- Just change the queue ordering (use different comparators)
 // Plan, don't cowboy
-// Partner email: krue2303 
+// Team emails: krue2303, piet9564
 // Make sure to include mutexes/semaphors in all critical sections, accessing editable scheduler data
 // 	Note: Scheduler data already contains a mutex for locking, use unique_lock? (repeatable)
+// Note: each process stores its own priority, start time, state, and other info
 
 // Shared data for all cores
 typedef struct SchedulerData {
@@ -55,7 +56,7 @@ int main(int argc, char **argv)
 	SchedulerData *shared_data;
 	std::vector<Process*> processes;
 	
-	uint64_t currentTime; 
+	uint64_t now; 
 	
 	// ----------------- Finished input checking and variable declaration ------------------
 	// ----------------- Start parsing config file ------------------
@@ -86,6 +87,8 @@ int main(int argc, char **argv)
 
 	// Free configuration data from memory
 	deleteConfig(config);
+	int d = 3;
+	d++; 
 	
 	// ----------------- Finished parsing config file ------------------
 	// ----------------- Start main work ------------------
@@ -108,17 +111,31 @@ int main(int argc, char **argv)
 		
 		
 		//   - Get current time
-		currentTime = currentTime(); 
+		now = currentTime(); 
 		
 		//   - *Check if any processes need to move from NotStarted to Ready (based on elapsed time), and if so put that process in the ready queue
 		//			NOTE the processes have start times that can be checked
-		//			NOTE need code to launch the later-starting processes
-		
+		for(int i = 0; i < processes.size(); i++) {
+			Process* proc = processes.at(i); 
+			if(proc->getState() == Process::State::NotStarted) {
+				if(proc->getStartTime() <= now) {
+					proc->setState(Process::State::Ready, now); 
+					shared_data->ready_queue.push_back(proc);
+				}
+			}
+		}
 		
 		//   - *Check if any processes have finished their I/O burst, and if so put that process back in the ready queue
-		
+		for(int i = 0; i < processes.size(); i++) {
+			Process* proc = processes.at(i); 
+			//if(now - proc->getBurstStartTime() >= proc-> current-burst-length) add to queue, update state, and currentBurst++ (note, check for other currentBurst++ areas)
+			//TODO how to check length of current burst? Need more process methods? 
+			
+		}
 		
 		//   - *Check if any running process need to be interrupted (RR time slice expires or newly ready process has higher priority)
+		//if(shared_data->algorithm == ) { //If round robin, and time slice expired...
+		//If preemptive priority, and queue has > current...
 		
 		
 		//   - *Sort the ready queue (if needed - based on scheduling algorithm)
@@ -126,7 +143,15 @@ int main(int argc, char **argv)
 		
 		//   - Determine if all processes are in the terminated state
 		//   - * = accesses shared data (ready queue), so be sure to use proper synchronization
-		
+		//just iterate through all processes, if any of them *aren't* terminated, return false
+		int alldone = 1; 
+		for(int i = 0; i < processes.size(); i++) {
+			Process* proc = processes.at(i); 
+			if(proc->getState() != Process::State::Terminated) {
+				alldone = 0; 
+			}
+		}
+		if(alldone == 1) shared_data->all_terminated = true; 
 		
 
 		// output process status table
@@ -165,7 +190,7 @@ int main(int argc, char **argv)
 
 void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 {
-	// Work to be done by each core idependent of the other cores
+	// Work to be done by each core independent of the other cores
 	// Repeat until all processes in terminated state:
 	//   - *Get process at front of ready queue
 	//   - Simulate the processes running until one of the following:
