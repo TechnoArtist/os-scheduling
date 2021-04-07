@@ -41,15 +41,19 @@ public:
     double getWaitTime() const;
     double getCpuTime() const;
     double getRemainingTime() const;
+    double getCurrentBurstTime() const;
 
     void setBurstStartTime(uint64_t current_time);
     void setState(State new_state, uint64_t current_time);
     void setCpuCore(int8_t core_num);
+    void setTotalWaitTime(uint32_t waitTime);
     void interrupt();
     void interruptHandled();
 
     void updateProcess(uint64_t current_time);
     void updateBurstTime(int burst_idx, uint32_t new_time);
+    void updateCurrentBurstTime(uint32_t new_time);
+    void updateCurrentBurst(); 
 };
 
 // Comparators: used in std::list sort() method

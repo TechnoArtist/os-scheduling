@@ -1,13 +1,7 @@
 #include "../include/process.h"
 
-// TODO write the 2 comparators
 // TODO write updateProcess (updates metadata on time counts)
 
-	/* Questions: 
-	- What is the burst_time array supposed to represent? E.g. is it static
-	- How are are we supposed to access the burst times and update the currentBurst counter? 
-	- 
-	*/
 
 // Process class methods
 Process::Process(ProcessDetails details, uint64_t current_time)
@@ -162,13 +156,14 @@ void Process::updateCurrentBurst()
 // SJF - comparator for sorting read queue based on shortest remaining CPU time
 bool SjfComparator::operator ()(const Process *p1, const Process *p2)
 {
-	// TODO your code here!
-	return false; // change this!
+	if(p1->getRemainingTime() < p2->getRemainingTime()){
+		return true;
+	}
+	return false;
 }
 
 // PP - comparator for sorting read queue based on priority
 bool PpComparator::operator ()(const Process *p1, const Process *p2)
 {
-	// TODO your code here!
-	return false; // change this!
+	return p1->getPriority() > p2->getPriority(); 
 }

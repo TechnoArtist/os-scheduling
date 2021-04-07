@@ -10,16 +10,11 @@
 #include "../include/configreader.h"
 #include "../include/process.h"
 
-// TODO times and cores and state. Table is done. 
 // May change any code as much as we like to get things done, 
 // but probably will mostly change main only. 
-// TODO implement custom comparators in process.cpp
-// Note, the scheduling algorithms are extremely similar, don't waste time duplicating
-//		- Round-robin, 1st come 1st serve, shortest job first, preemptive priority
-//		- Just change the queue ordering (use different comparators)
 // Plan, don't cowboy
 // Team emails: krue2303, piet9564
-// Make sure to include mutexes/semaphors in all critical sections, accessing editable scheduler data
+// TODO Make sure to include mutexes/semaphors in all critical sections, accessing editable scheduler data
 // 	Note: Scheduler data already contains a mutex for locking, use unique_lock? (repeatable)
 // Note: each process stores its own priority, start time, state, and other info
 
@@ -32,6 +27,8 @@ typedef struct SchedulerData {
 	uint32_t time_slice;
 	std::list<Process*> ready_queue;
 	bool all_terminated;
+	/*TODO array of size num_cores, each core's id is an index for its currently running process*/
+	//Process[4] running_array? Something like that
 } SchedulerData;
 
 void coreRunProcesses(uint8_t core_id, SchedulerData *data);
@@ -55,8 +52,27 @@ int main(int argc, char **argv)
 	int i;
 	SchedulerData *shared_data;
 	std::vector<Process*> processes;
+
+	//variables for final statistics
+	uint64_t finish = 0;
+	uint64_t totalTime = 0;
+	uint64_t averageThroughput = 0;
+	uint64_t totalFirst50 = 0;
+	uint64_t averageFirst50 = 0;
+	uint64_t totalLast50 = 0;
+	uint64_t averageLast50 = 0;
+	double totalTurnaroundTime = 0;
+	double averageTurnaroundTime = 0;
+	double totalWaitTime = 0;
+	double averageWaitTime = 0;
+	int number_processes = 0;
+	uint64_t totalCpuTime = 0;
+	uint64_t utilTime = 0;
 	
 	uint64_t now; 
+	
+	struct SjfComparator sjfcomparator; 
+	struct PpComparator ppcomparator; 
 	
 	// ----------------- Finished input checking and variable declaration ------------------
 	// ----------------- Start parsing config file ------------------
@@ -85,6 +101,8 @@ int main(int argc, char **argv)
 		}
 	}
 
+	number_processes = config->num_processes;
+
 	// Free configuration data from memory
 	deleteConfig(config);
 	int d = 3;
@@ -102,6 +120,7 @@ int main(int argc, char **argv)
 
 	// Main thread work goes here
 	int num_lines = 0;
+	Process* proc; 
 	while (!(shared_data->all_terminated))
 	{
 		// Clear output from previous iteration
@@ -116,7 +135,7 @@ int main(int argc, char **argv)
 		//   - *Check if any processes need to move from NotStarted to Ready (based on elapsed time), and if so put that process in the ready queue
 		//			NOTE the processes have start times that can be checked
 		for(int i = 0; i < processes.size(); i++) {
-			Process* proc = processes.at(i); 
+			proc = processes.at(i); 
 			if(proc->getState() == Process::State::NotStarted) {
 				if(proc->getStartTime() <= now) {
 					proc->setState(Process::State::Ready, now); 
@@ -127,7 +146,7 @@ int main(int argc, char **argv)
 		
 		//   - *Check if any processes have finished their I/O burst, and if so put that process back in the ready queue
 		for(int i = 0; i < processes.size(); i++) {
-			Process* proc = processes.at(i); 
+			proc = processes.at(i); 
 			if(now - proc->getBurstStartTime() >= proc->getCurrentBurstTime()) {
 				proc->setState(Process::State::Ready, now); 
 				shared_data->ready_queue.push_back(proc); 
@@ -138,42 +157,48 @@ int main(int argc, char **argv)
 		
 		//   - *Check if any running process need to be interrupted (RR time slice expires or newly ready process has higher priority)
 		if(shared_data->algorithm == ScheduleAlgorithm::RR) {
-			Process* proc = processes.at(i); //TODO replace this
-			for(int i = 0; i < ready_queue.size(); i++) { 
-				//TODO how to iterate through the running queue? 
-				//What's the currently running queue? Is it just checking each of the threads for its process, if it has one? 
-				//The currently running queue is multiple threads and this will run for each thread, don't worry about looping it, just use shared data? 
-				//There should be a single currently running process because this is just one thread (but where is it?)
-				//There's a function that runs each process in turn, from the front of ready queue. That should handle the interrupts. 
-				if((now - proc->getBurstStartTime()) >= shared_data->time_slice) { 
+			Process* current_proc = processes.at(0); 
+			for(int i = 0; i < processes.size(); i++) { 
+				current_proc = processes.at(i); 
+				if(current_proc->getState() == Process::Running && (now - current_proc->getBurstStartTime()) >= shared_data->time_slice) { 
 					//If round robin, and time slice expired...
-					proc->interrupt(); 
-					// TODO interrupt means also remove the process from the core and put it back in the ready queue
-					shared_data->ready_queue.push_back(proc); 
-					// possibly also update the current burst total time or smth, to know how much time is left in it? 
+					current_proc->interrupt(); 
+					shared_data->ready_queue.push_back(current_proc); 
 				}
 			}
 		}
 		
+		Process* current_proc = processes.at(0);
 		if(shared_data->algorithm == ScheduleAlgorithm::PP) {
-			//TODO iterate through ready queue, comparing priority with current
-			//If preemptive priority, and queue has > current...
+			for(int i = 0; i < processes.size(); i++) {
+				//iterate through ready queue, comparing priority with any running processes
+				current_proc = processes.at(i); 
+				if(current_proc->getState() == Process::Running) {
+					for(int j = 0; j < shared_data->ready_queue.size(); j++){
+						proc = processes.at(j); 
+						if(current_proc->getPriority() < proc->getPriority()){
+							//If preemptive priority, and queue has > current...
+							current_proc->interrupt();
+							shared_data->ready_queue.push_back(current_proc);
+						}
+					}
+				}
+			}
 			
-			// TODO Interrupt means: call interrupt(), remove from core, add to ready queue, update current burst time until done
-			// Does preemptive priority mean checking whether push_back or push_front to ready queue? It doesn't seem to affect anywhere else
 		}
 		
 		
 		//   - *Sort the ready queue (if needed - based on scheduling algorithm)
-		//TODO this ^
+		//TODO double check this syntax
+		if(shared_data->algorithm == ScheduleAlgorithm::SJF) shared_data->ready_queue.sort(sjfcomparator); 
+		if(shared_data->algorithm == ScheduleAlgorithm::PP) shared_data->ready_queue.sort(ppcomparator); 
 		
 		
 		//   - Determine if all processes are in the terminated state
 		//   - * = accesses shared data (ready queue), so be sure to use proper synchronization
-		//TODO when and why does this access the ready queue? 
 		int alldone = 1; 
 		for(int i = 0; i < processes.size(); i++) {
-			Process* proc = processes.at(i); 
+			proc = processes.at(i); 
 			if(proc->getState() != Process::State::Terminated) {
 				alldone = 0; 
 			}
@@ -195,14 +220,57 @@ int main(int argc, char **argv)
 		schedule_threads[i].join();
 	}
 
-	// print final statistics
+	//variables for final statistics
+	//TODO make sure for all total statistics that they are being incremented at the proper time to get the proper totals at the end
+	finish = currentTime();
+	totalTime = start - finish;
+
+	//calculate throughput statistics
+	averageThroughput = totalTime/ number_processes;
+	//TODO check for if num_process is even or odd?? maybe change the / 2 to compensate
+	//note: I think you can get the num processes from processes.size()
+	averageFirst50 = totalFirst50 / number_processes / 2;
+	averageLast50 = averageLast50 / number_processes / 2;
+
+	//calculate CPU utilization (% of time CPU is actually computing)
+	//timeIdle/totalTime? or (running + io) / totalTime
+	for(int j = 0; j < number_processes; j++){
+		Process* proc1 = processes.at(j);
+		totalCpuTime = totalCpuTime + proc1->getCpuTime();
+	}
+	utilTime = totalCpuTime / totalTime;
+	//to make a percentage
+	utilTime = utilTime * 100;
+
+	//calculate average turnaround time
+	for(int j = 0; j < number_processes; j++){
+		Process* proc1 = processes.at(j);
+		totalTurnaroundTime = totalTurnaroundTime + proc1->getTurnaroundTime();
+	}
+	averageTurnaroundTime = totalTurnaroundTime / number_processes;
+
+	//calculate average wait time
+	for(int j = 0; j < number_processes; j++){
+		Process* proc1 = processes.at(j);
+		totalWaitTime = totalWaitTime + proc1->getWaitTime();
+	}
+	averageWaitTime = totalWaitTime / number_processes;
+
+	// TODO calculate and print final statistics (not the printProcessOutput table)
 	//  - CPU utilization (executing vs idle; ready, or switching, are idle)
+	printf("CPU Utilization: %lui", utilTime);
 	//  - Throughput (how long to finish...)
 	//	 - Average for first 50% of processes finished
+	printf("First 50 Percent Average Throughput: %lui", averageFirst50);
 	//	 - Average for second 50% of processes finished
+	printf("Last 50 Percent Average Throughput: %lui", averageLast50);
 	//	 - Overall average
+	printf("Overall Average Throughput: %lui", averageThroughput);
 	//  - Average turnaround time (how long to finish individual)
+	printf("Average Turnaround Time: %f", averageTurnaroundTime);
 	//  - Average waiting time (how much time spent in ready queue)
+	printf("Average Wait Time: %f", averageWaitTime);
+	
 	
 	// Round robin, 1st come 1st serve, shortest remaining time
 	// Preemptive priority scheduling (will interrupt lower if a higher comes in)
@@ -217,21 +285,62 @@ int main(int argc, char **argv)
 
 void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 {
-	// TODO all of this
+	Process* current_proc; 
+	uint64_t now; 
 	
 	// Work to be done by each core independent of the other cores
 	// Repeat until all processes in terminated state:
-	//   - *Get process at front of ready queue
-	//   - Simulate the processes running until one of the following:
-	//	 - CPU burst time has elapsed
-	//	 - Interrupted (RR time slice has elapsed or process preempted by higher priority process)
-	//			NOTE don't sleep for too long, in case of interrupt etc
-	//  - Place the process back in the appropriate queue
-	//	 - I/O queue if CPU burst finished (and process not finished) -- no actual queue, simply set state to IO
-	//	 - Terminated if CPU burst finished and no more bursts remain -- no actual queue, simply set state to Terminated
-	//	 - *Ready queue if interrupted (be sure to modify the CPU burst time to now reflect the remaining time)
-	//  - Wait context switching time
-	//  - * = accesses shared data (ready queue), so be sure to use proper synchronization
+	while(!(shared_data->all_terminated)) {
+		now = currentTime(); 
+		//   - *Get process at front of ready queue
+		current_proc = *shared_data->ready_queue.begin(); //how to get an item from the ready queue? 
+		shared_data->ready_queue.pop_front(); //TODO use the to-be-made current proc variable
+		current_proc->setState(Process::Running, now); 
+		
+		//   - Simulate the processes running until one of the following:
+		while(true) {
+			//	 - CPU burst time has elapsed
+			if(currentTime() - current_proc->getBurstStartTime() >= current_proc->getCurrentBurstTime()) {
+				current_proc->updateCurrentBurst(); 
+				break; 
+			}
+			
+			//	 - Interrupted (RR time slice has elapsed or process preempted by higher priority process)
+			if(current_proc->isInterrupted()) {
+				break; 
+			}
+			
+			//			NOTE don't sleep for too long, in case of interrupt etc
+			usleep(20000); 
+		}
+		
+		now = currentTime(); 
+		
+		//  - Place the process back in the appropriate queue
+		//	 - I/O queue if CPU burst finished (and process not finished) -- no actual queue, simply set state to IO
+		if(!current_proc->isInterrupted() && current_proc->getRemainingTime() > 0) {
+			current_proc->setState(Process::IO, now); 
+		}
+		//	 - Terminated if CPU burst finished and no more bursts remain -- no actual queue, simply set state to Terminated
+		if(current_proc->getRemainingTime() <= 0) {
+			current_proc->setState(Process::Terminated, now); 
+		}
+		//	 - *Ready queue if interrupted (be sure to modify the CPU burst time to now reflect the remaining time)
+		if(current_proc->isInterrupted()) {
+			current_proc->setState(Process::Ready, now); 
+			current_proc->updateCurrentBurstTime(current_proc->getCurrentBurstTime() - (now - current_proc->getBurstStartTime())); 
+			current_proc->updateCurrentBurst(); 
+			current_proc->interruptHandled(); 
+			shared_data->ready_queue.push_back(current_proc); 
+		}
+		
+		//  - Wait context switching time
+		usleep(shared_data->context_switch * 1000); 
+		
+		//  - * = accesses shared data (ready queue), so be sure to use proper synchronization
+		
+		//TODO remove current proc from the running variable
+	}
 }
 
 int printProcessOutput(std::vector<Process*>& processes, std::mutex& mutex)
