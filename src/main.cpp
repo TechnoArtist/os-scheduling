@@ -128,22 +128,49 @@ int main(int argc, char **argv)
 		//   - *Check if any processes have finished their I/O burst, and if so put that process back in the ready queue
 		for(int i = 0; i < processes.size(); i++) {
 			Process* proc = processes.at(i); 
-			//if(now - proc->getBurstStartTime() >= proc-> current-burst-length) add to queue, update state, and currentBurst++ (note, check for other currentBurst++ areas)
-			//TODO how to check length of current burst? Need more process methods? 
+			if(now - proc->getBurstStartTime() >= proc->getCurrentBurstTime()) {
+				proc->setState(Process::State::Ready, now); 
+				shared_data->ready_queue.push_back(proc); 
+				proc->updateCurrentBurst(); //TODO look for other areas that current_burst would need to be incremented
+			}
 			
 		}
 		
 		//   - *Check if any running process need to be interrupted (RR time slice expires or newly ready process has higher priority)
-		//if(shared_data->algorithm == ) { //If round robin, and time slice expired...
-		//If preemptive priority, and queue has > current...
+		if(shared_data->algorithm == ScheduleAlgorithm::RR) {
+			Process* proc = processes.at(i); //TODO replace this
+			for(int i = 0; i < ready_queue.size(); i++) { 
+				//TODO how to iterate through the running queue? 
+				//What's the currently running queue? Is it just checking each of the threads for its process, if it has one? 
+				//The currently running queue is multiple threads and this will run for each thread, don't worry about looping it, just use shared data? 
+				//There should be a single currently running process because this is just one thread (but where is it?)
+				//There's a function that runs each process in turn, from the front of ready queue. That should handle the interrupts. 
+				if((now - proc->getBurstStartTime()) >= shared_data->time_slice) { 
+					//If round robin, and time slice expired...
+					proc->interrupt(); 
+					// TODO interrupt means also remove the process from the core and put it back in the ready queue
+					shared_data->ready_queue.push_back(proc); 
+					// possibly also update the current burst total time or smth, to know how much time is left in it? 
+				}
+			}
+		}
+		
+		if(shared_data->algorithm == ScheduleAlgorithm::PP) {
+			//TODO iterate through ready queue, comparing priority with current
+			//If preemptive priority, and queue has > current...
+			
+			// TODO Interrupt means: call interrupt(), remove from core, add to ready queue, update current burst time until done
+			// Does preemptive priority mean checking whether push_back or push_front to ready queue? It doesn't seem to affect anywhere else
+		}
 		
 		
 		//   - *Sort the ready queue (if needed - based on scheduling algorithm)
+		//TODO this ^
 		
 		
 		//   - Determine if all processes are in the terminated state
 		//   - * = accesses shared data (ready queue), so be sure to use proper synchronization
-		//just iterate through all processes, if any of them *aren't* terminated, return false
+		//TODO when and why does this access the ready queue? 
 		int alldone = 1; 
 		for(int i = 0; i < processes.size(); i++) {
 			Process* proc = processes.at(i); 
@@ -190,6 +217,8 @@ int main(int argc, char **argv)
 
 void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 {
+	// TODO all of this
+	
 	// Work to be done by each core independent of the other cores
 	// Repeat until all processes in terminated state:
 	//   - *Get process at front of ready queue

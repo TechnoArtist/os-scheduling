@@ -100,6 +100,11 @@ double Process::getRemainingTime() const
 	return (double)remain_time / 1000.0;
 }
 
+double Process::getCurrentBurstTime() const 
+{
+	return (double)current_burst / 1000.0;
+}
+
 void Process::setBurstStartTime(uint64_t current_time)
 {
 	burst_start_time = current_time;
@@ -141,6 +146,15 @@ void Process::updateBurstTime(int burst_idx, uint32_t new_time)
 	burst_times[burst_idx] = new_time;
 }
 
+void Process::updateCurrentBurstTime(uint32_t new_time) 
+{
+	updateBurstTime(current_burst, new_time); 
+}
+
+void Process::updateCurrentBurst() 
+{
+	current_burst++; 
+}
 
 // Comparator methods: used in std::list sort() method
 // No comparator needed for FCFS or RR (ready queue never sorted)
