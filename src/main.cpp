@@ -12,9 +12,7 @@
 
 // May change any code as much as we like to get things done, 
 // but probably will mostly change main only. 
-// Plan, don't cowboy
 // Team emails: krue2303, piet9564
-// TODO Make sure to include mutexes/semaphors in all critical sections, accessing editable scheduler data
 // 	Note: Scheduler data already contains a mutex for locking, use unique_lock? (repeatable)
 // Note: each process stores its own priority, start time, state, and other info
 
@@ -27,8 +25,7 @@ typedef struct SchedulerData {
 	uint32_t time_slice;
 	std::list<Process*> ready_queue;
 	bool all_terminated;
-	/*TODO array of size num_cores, each core's id is an index for its currently running process*/
-	//Process[4] running_array? Something like that
+	Process** running_array; 
 } SchedulerData;
 
 void coreRunProcesses(uint8_t core_id, SchedulerData *data);
@@ -102,11 +99,15 @@ int main(int argc, char **argv)
 	}
 
 	number_processes = config->num_processes;
+	
+	shared_data->running_array = (Process**)malloc(sizeof(Process*) * num_cores); 
 
 	// Free configuration data from memory
 	deleteConfig(config);
 	int d = 3;
 	d++; 
+	
+	free(shared_data->running_array); 
 	
 	// ----------------- Finished parsing config file ------------------
 	// ----------------- Start main work ------------------
@@ -121,13 +122,13 @@ int main(int argc, char **argv)
 	// Main thread work goes here
 	int num_lines = 0;
 	Process* proc; 
+	//std::unique_lock<std::mutex> lock(shared_data->mutex);
 	while (!(shared_data->all_terminated))
 	{
 		// Clear output from previous iteration
 		clearOutput(num_lines);
 
 		// Do the following:
-		
 		
 		//   - Get current time
 		now = currentTime(); 
@@ -138,8 +139,10 @@ int main(int argc, char **argv)
 			proc = processes.at(i); 
 			if(proc->getState() == Process::State::NotStarted) {
 				if(proc->getStartTime() <= now) {
+					//while(!lock.try_lock()) {}
 					proc->setState(Process::State::Ready, now); 
 					shared_data->ready_queue.push_back(proc);
+					//lock.unlock(); 
 				}
 			}
 		}
@@ -148,31 +151,37 @@ int main(int argc, char **argv)
 		for(int i = 0; i < processes.size(); i++) {
 			proc = processes.at(i); 
 			if(now - proc->getBurstStartTime() >= proc->getCurrentBurstTime()) {
+				proc->updateProcess(now); 
 				proc->setState(Process::State::Ready, now); 
+				//lock.lock(); 
 				shared_data->ready_queue.push_back(proc); 
-				proc->updateCurrentBurst(); //TODO look for other areas that current_burst would need to be incremented
+				//lock.unlock(); 
+				proc->updateCurrentBurst(); 
 			}
 			
 		}
 		
 		//   - *Check if any running process need to be interrupted (RR time slice expires or newly ready process has higher priority)
 		if(shared_data->algorithm == ScheduleAlgorithm::RR) {
+			//while(!lock.try_lock()) {}
 			Process* current_proc = processes.at(0); 
-			for(int i = 0; i < processes.size(); i++) { 
-				current_proc = processes.at(i); 
+			for(int i = 0; i < num_cores; i++) { 
+				current_proc = shared_data->running_array[i]; 
 				if(current_proc->getState() == Process::Running && (now - current_proc->getBurstStartTime()) >= shared_data->time_slice) { 
 					//If round robin, and time slice expired...
 					current_proc->interrupt(); 
 					shared_data->ready_queue.push_back(current_proc); 
 				}
 			}
+			//lock.unlock(); 
 		}
 		
-		Process* current_proc = processes.at(0);
 		if(shared_data->algorithm == ScheduleAlgorithm::PP) {
-			for(int i = 0; i < processes.size(); i++) {
+			//while(!lock.try_lock()) {}
+			Process* current_proc = processes.at(0);
+			for(int i = 0; i < num_cores; i++) {
 				//iterate through ready queue, comparing priority with any running processes
-				current_proc = processes.at(i); 
+				current_proc = shared_data->running_array[i]; 
 				if(current_proc->getState() == Process::Running) {
 					for(int j = 0; j < shared_data->ready_queue.size(); j++){
 						proc = processes.at(j); 
@@ -184,18 +193,25 @@ int main(int argc, char **argv)
 					}
 				}
 			}
+			//lock.unlock(); 
 			
 		}
 		
-		
 		//   - *Sort the ready queue (if needed - based on scheduling algorithm)
-		//TODO double check this syntax
-		if(shared_data->algorithm == ScheduleAlgorithm::SJF) shared_data->ready_queue.sort(sjfcomparator); 
-		if(shared_data->algorithm == ScheduleAlgorithm::PP) shared_data->ready_queue.sort(ppcomparator); 
-		
+		if(shared_data->algorithm == ScheduleAlgorithm::SJF) {
+			//while(!lock.try_lock()) {}
+			shared_data->ready_queue.sort(sjfcomparator); 
+			//lock.unlock(); 
+		}
+		if(shared_data->algorithm == ScheduleAlgorithm::PP) { 
+			//while(!lock.try_lock()) {}
+			shared_data->ready_queue.sort(ppcomparator); 
+			//lock.unlock(); 
+		}
 		
 		//   - Determine if all processes are in the terminated state
 		//   - * = accesses shared data (ready queue), so be sure to use proper synchronization
+		//while(!lock.try_lock()) {}
 		int alldone = 1; 
 		for(int i = 0; i < processes.size(); i++) {
 			proc = processes.at(i); 
@@ -204,6 +220,7 @@ int main(int argc, char **argv)
 			}
 		}
 		if(alldone == 1) shared_data->all_terminated = true; 
+		//lock.unlock(); 
 		
 
 		// output process status table
@@ -220,20 +237,26 @@ int main(int argc, char **argv)
 		schedule_threads[i].join();
 	}
 
-	//variables for final statistics
-	//TODO make sure for all total statistics that they are being incremented at the proper time to get the proper totals at the end
+	//calculations for final statistics
 	finish = currentTime();
 	totalTime = start - finish;
 
 	//calculate throughput statistics
 	averageThroughput = totalTime/ number_processes;
-	//TODO check for if num_process is even or odd?? maybe change the / 2 to compensate
+	int firstHalfNum = 0;
+	int secondHalfNum = 0;
+	firstHalfNum = number_processes / 2;
+	secondHalfNum = firstHalfNum;
+	//compenstate for odd total number of processes
+	if(number_processes % 2 != 0){
+		firstHalfNum = firstHalfNum + 1;
+	}
+	
 	//note: I think you can get the num processes from processes.size()
-	averageFirst50 = totalFirst50 / number_processes / 2;
-	averageLast50 = averageLast50 / number_processes / 2;
+	averageFirst50 = totalFirst50 / firstHalfNum;
+	averageLast50 = averageLast50 / secondHalfNum;
 
 	//calculate CPU utilization (% of time CPU is actually computing)
-	//timeIdle/totalTime? or (running + io) / totalTime
 	for(int j = 0; j < number_processes; j++){
 		Process* proc1 = processes.at(j);
 		totalCpuTime = totalCpuTime + proc1->getCpuTime();
@@ -256,7 +279,7 @@ int main(int argc, char **argv)
 	}
 	averageWaitTime = totalWaitTime / number_processes;
 
-	// TODO calculate and print final statistics (not the printProcessOutput table)
+	// calculate and print final statistics (not the printProcessOutput table)
 	//  - CPU utilization (executing vs idle; ready, or switching, are idle)
 	printf("CPU Utilization: %lui", utilTime);
 	//  - Throughput (how long to finish...)
@@ -270,10 +293,6 @@ int main(int argc, char **argv)
 	printf("Average Turnaround Time: %f", averageTurnaroundTime);
 	//  - Average waiting time (how much time spent in ready queue)
 	printf("Average Wait Time: %f", averageWaitTime);
-	
-	
-	// Round robin, 1st come 1st serve, shortest remaining time
-	// Preemptive priority scheduling (will interrupt lower if a higher comes in)
 
 	// Clean up before quitting program
 	processes.clear();
@@ -287,21 +306,27 @@ void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 {
 	Process* current_proc; 
 	uint64_t now; 
+	//std::unique_lock<std::mutex> lock(shared_data->mutex);
 	
 	// Work to be done by each core independent of the other cores
 	// Repeat until all processes in terminated state:
 	while(!(shared_data->all_terminated)) {
 		now = currentTime(); 
 		//   - *Get process at front of ready queue
+		//while(!lock.try_lock()) {}
 		current_proc = *shared_data->ready_queue.begin(); //how to get an item from the ready queue? 
-		shared_data->ready_queue.pop_front(); //TODO use the to-be-made current proc variable
+		shared_data->ready_queue.pop_front(); 
+		current_proc->updateProcess(now); 
 		current_proc->setState(Process::Running, now); 
+		shared_data->running_array[core_id] = current_proc; 
+		//lock.unlock(); 
 		
 		//   - Simulate the processes running until one of the following:
 		while(true) {
 			//	 - CPU burst time has elapsed
 			if(currentTime() - current_proc->getBurstStartTime() >= current_proc->getCurrentBurstTime()) {
 				current_proc->updateCurrentBurst(); 
+				current_proc->updateProcess(now); 
 				break; 
 			}
 			
@@ -319,19 +344,25 @@ void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 		//  - Place the process back in the appropriate queue
 		//	 - I/O queue if CPU burst finished (and process not finished) -- no actual queue, simply set state to IO
 		if(!current_proc->isInterrupted() && current_proc->getRemainingTime() > 0) {
+			current_proc->updateProcess(now); 
 			current_proc->setState(Process::IO, now); 
+			current_proc->updateCurrentBurst(); 
 		}
 		//	 - Terminated if CPU burst finished and no more bursts remain -- no actual queue, simply set state to Terminated
 		if(current_proc->getRemainingTime() <= 0) {
+			current_proc->updateProcess(now); 
 			current_proc->setState(Process::Terminated, now); 
 		}
 		//	 - *Ready queue if interrupted (be sure to modify the CPU burst time to now reflect the remaining time)
 		if(current_proc->isInterrupted()) {
+			current_proc->updateProcess(now); 
 			current_proc->setState(Process::Ready, now); 
 			current_proc->updateCurrentBurstTime(current_proc->getCurrentBurstTime() - (now - current_proc->getBurstStartTime())); 
 			current_proc->updateCurrentBurst(); 
 			current_proc->interruptHandled(); 
+			//while(!lock.try_lock()) {}
 			shared_data->ready_queue.push_back(current_proc); 
+			//lock.unlock(); 
 		}
 		
 		//  - Wait context switching time
@@ -339,7 +370,10 @@ void coreRunProcesses(uint8_t core_id, SchedulerData *shared_data)
 		
 		//  - * = accesses shared data (ready queue), so be sure to use proper synchronization
 		
-		//TODO remove current proc from the running variable
+		// remove current proc from the running variable
+		//while(!lock.try_lock()) {}
+		shared_data->running_array[core_id] = 0; 
+		//lock.unlock(); 
 	}
 }
 

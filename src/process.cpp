@@ -111,6 +111,8 @@ void Process::setState(State new_state, uint64_t current_time)
 		launch_time = current_time;
 	}
 	state = new_state;
+	
+	setBurstStartTime(current_time); 
 }
 
 void Process::setCpuCore(int8_t core_num)
@@ -130,8 +132,33 @@ void Process::interruptHandled()
 
 void Process::updateProcess(uint64_t current_time)
 {
-	// TODO use `current_time` to update turnaround time, wait time, 
+	// use `current_time` to update turnaround time, wait time, 
 	// burst times, cpu time, and remaining time
+	
+	// update turnaround time -- total time since launch
+	turn_time = (uint32_t)(current_time - (uint64_t)start_time);
+
+	// update wait time -- total time spent waiting in the ready queue
+	if(getState() == State::Running){
+		wait_time = wait_time + (current_time - getBurstStartTime());
+	}
+
+	// update burst time
+	if(getState() == State::Running || getState() == State::IO){
+		updateCurrentBurstTime(burst_times[current_burst] - (current_time - getBurstStartTime()));
+	}
+
+	// update cpu time -- total time spend running
+	if(getState() == State::IO){
+		cpu_time = cpu_time + (current_time - getBurstStartTime());
+	}
+
+	//update remaining time -- time until terminated -- total of burst times remaining?
+	remain_time = 0;
+	for(int i = current_burst; i < num_bursts; i++) 
+	{
+		remain_time = remain_time + burst_times[i]; 
+	}
 	
 }
 
